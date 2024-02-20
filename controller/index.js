@@ -2,10 +2,14 @@
 const Protocol = require('./daly_protocol');
 
 class Controller {
+
+    #interval;
+    #protocol;
+
     constructor(settings) {
 
-        this.interval = undefined;
-        this.protocol = new Protocol(settings);
+        this.#interval = undefined;
+        this.#protocol = new Protocol(settings);
 
         this.packVoltage;
         this.packCurrent;
@@ -49,8 +53,8 @@ class Controller {
 
     async getPackMeasurements() {
         try {
-            await this.protocol.sendCommand(this.protocol.VOUT_IOUT_SOC);
-            let rxBuffer = await this.protocol.receiveBytes();
+            await this.#protocol.sendCommand(this.#protocol.VOUT_IOUT_SOC);
+            let rxBuffer = await this.#protocol.receiveBytes();
 
             this.packVoltage = ((rxBuffer[4] << 8) + rxBuffer[5]) / 10.0;
             this.packCurrent = (((rxBuffer[8] << 8) + rxBuffer[9]) - 30000) / 10.0;
@@ -63,8 +67,8 @@ class Controller {
 
     async getMinMaxCellVoltage() {
         try {
-            await this.protocol.sendCommand(this.protocol.MIN_MAX_CELL_VOLTAGE);
-            let rxBuffer = await this.protocol.receiveBytes();
+            await this.#protocol.sendCommand(this.#protocol.MIN_MAX_CELL_VOLTAGE);
+            let rxBuffer = await this.#protocol.receiveBytes();
 
             this.maxCellmV = ((rxBuffer[4] << 8) + rxBuffer[5]);
             this.maxCellVNum = rxBuffer[6]
@@ -81,8 +85,8 @@ class Controller {
 
     async getPackTemp() {
         try {
-            await this.protocol.sendCommand(this.protocol.MIN_MAX_TEMPERATURE);
-            let rxBuffer = await this.protocol.receiveBytes();
+            await this.#protocol.sendCommand(this.#protocol.MIN_MAX_TEMPERATURE);
+            let rxBuffer = await this.#protocol.receiveBytes();
 
             // An offset of 40 is added by the BMS to avoid having to deal with negative numbers, see protocol in /docs/
             this.tempMax = (rxBuffer[4] - 40);
@@ -90,14 +94,14 @@ class Controller {
             this.tempAverage = (this.tempMax + this.tempMin) / 2;
 
         } catch (err) {
-            console.error(err);
+            throw Error(err);
         }
     }
 
     async getDischargeChargeMosStatus() {
         try {
-            await this.protocol.sendCommand(this.protocol.DISCHARGE_CHARGE_MOS_STATUS);
-            let rxBuffer = await this.protocol.receiveBytes();
+            await this.#protocol.sendCommand(this.#protocol.DISCHARGE_CHARGE_MOS_STATUS);
+            let rxBuffer = await this.#protocol.receiveBytes();
 
             this.chargeDischargeStatus = rxBuffer[4];
             this.chargeFetState = rxBuffer[5];
@@ -106,14 +110,14 @@ class Controller {
             this.resCapacitymAh = (rxBuffer[8] << 0x18) + (rxBuffer[9] << 0x10) + (rxBuffer[10] << 0x08) + rxBuffer[11];
 
         } catch (err) {
-            console.error(err);
+            throw Error(err);
         }
     }
 
     async getStatusInfo() {
         try {
-            await this.protocol.sendCommand(this.protocol.STATUS_INFO);
-            let rxBuffer = await this.protocol.receiveBytes();
+            await this.#protocol.sendCommand(this.#protocol.STATUS_INFO);
+            let rxBuffer = await this.#protocol.receiveBytes();
 
             this.numberOfCells = rxBuffer[4];
             this.numOfTempSensors = rxBuffer[5];
@@ -131,17 +135,17 @@ class Controller {
 
 
         } catch (err) {
-            console.error(err);
+            throw Error(err);
         }
     }
 
     async getCellVoltages() {
         try {
             let cellNo = 0;
-            await this.protocol.sendCommand(this.protocol.CELL_VOLTAGES);
+            await this.#protocol.sendCommand(this.#protocol.CELL_VOLTAGES);
 
             for (let i = 0; i <= Math.ceil(this.numberOfCells / 3); i++) {
-                let rxBuffer = await this.protocol.receiveBytes();
+                let rxBuffer = await this.#protocol.receiveBytes();
 
                 for (let j = 0; j < 3; j++) {
                     this.cellVmV[cellNo] = (rxBuffer[5 + j * 2] << 8) + rxBuffer[6 + j * 2];
@@ -153,16 +157,16 @@ class Controller {
                     break;
             }
         } catch (err) {
-            console.error(err);
+            throw Error(err);
         }
     }
 
     async getCellTemperature() {
         try {
             let sensorNo = 0;
-            await this.protocol.sendCommand(this.protocol.CELL_TEMPERATURE);
+            await this.#protocol.sendCommand(this.#protocol.CELL_TEMPERATURE);
             for (let i = 0; i <= Math.ceil(this.numOfTempSensors / 7); i++) {
-                let rxBuffer = await this.protocol.receiveBytes();
+                let rxBuffer = await this.#protocol.receiveBytes();
                 for (let j = 0; j < 7; j++) {
                     this.cellTemperature[sensorNo] = (rxBuffer[5 + j] - 40);
                     sensorNo++;
@@ -173,7 +177,7 @@ class Controller {
                     break;
             }
         } catch (err) {
-            console.error(err);
+            throw Error(err);
         }
     }
 
@@ -181,8 +185,8 @@ class Controller {
         try {
             let cellBit = 0;
             let cellBalance = 0;
-            await this.protocol.sendCommand(this.protocol.CELL_BALANCE_STATE);
-            let rxBuffer = await this.protocol.receiveBytes();
+            await this.#protocol.sendCommand(this.#protocol.CELL_BALANCE_STATE);
+            let rxBuffer = await this.#protocol.receiveBytes();
 
             // We expect 6 bytes response for this command
             for (let i = 0; i < 6; i++) {
@@ -212,47 +216,137 @@ class Controller {
             }
 
         } catch (err) {
+            throw Error(err);
+        }
+    }
+
+    async reset() {
+        try {
+            await this.#protocol.sendCommand(this.#protocol.CELL_BALANCE_STATE);
+            await this.#protocol.receiveBytes();
+        } catch (err) {
+            throw Error(err);
+        }
+    }
+
+    async setDischargeMOS(value) {
+        try {
+            await this.#protocol.sendCommand(this.#protocol.DISCHRG_FET, [value == true ? 1 : 0]);
+            await this.#protocol.receiveBytes();
+        } catch (err) {
             console.error(err);
         }
     }
 
+    async setChargeMOS(value) {
+        try {
+            await this.#protocol.sendCommand(this.#protocol.CHRG_FET, [value == true ? 1 : 0]);
+            await this.#protocol.receiveBytes();
+        } catch (err) {
+            throw Error(err);
+        }
+    }
+
+    async sleep(delay) {
+        return new Promise((resolve, reject) => {
+            setTimeout(() => {
+                resolve();
+            }, delay)
+        });
+    }
+
     async connect() {
         try {
-            await this.protocol.open();
+            await this.#protocol.open();
+
+            /*  await this.reset();
+              await this.setDischargeMOS(true);
+              await this.setDischargeMOS(false);
+              await this.setChargeMOS(true);
+              await this.setChargeMOS(false);
+  */
+            await this.getStatusInfo();
+
             let flag = false;
             let state = 0;
-            this.interval = setInterval(async () => {
+            this.#interval = setInterval(async () => {
                 if (flag == false) {
                     flag = true;
                     try {
-                        state == 0 ? await this.getPackMeasurements() : undefined;
-                        state == 0 ? await this.getMinMaxCellVoltage() : undefined;
-                        state == 0 ? await this.getPackTemp() : undefined;
-                        state == 0 ? await this.getDischargeChargeMosStatus() : undefined;
-                        state == 0 ? await this.getStatusInfo() : undefined;
-                        state == 1 ? await this.getCellVoltages() : undefined;
-                        state == 2 ? await this.getCellTemperature() : undefined;
-                        state == 2 ? await this.getCellBalanceState() : undefined;
-                        state++;
-                        if (state >= 10) {
-                            state = 0;
+                        switch (state) {
+                            case (0):
+                                state++;
+                                break;
+                            case (1):
+                                await this.getPackMeasurements();
+                                state++;
+                                break;
+                            case (2):
+                                await this.getMinMaxCellVoltage();
+                                state++;
+                                break;
+                            case (3):
+                                await this.getPackTemp();
+                                state++;
+                                break;
+                            case (4):
+                                await this.getDischargeChargeMosStatus();
+                                state++;
+                                break;
+                            case (5):
+                                await this.getStatusInfo();
+                                state++;
+                                break;
+                            case (6):
+                                await this.getCellVoltages();
+                                state++;
+                                break;
+                            case (7):
+                                await this.getCellTemperature();
+                                state++;
+                                break;
+                            case (8):
+                                await this.getCellBalanceState();
+                                state++;
+                                break;
+                          /*  case (9):
+                                await this.getFailureCodes();
+                                state++;
+                                break;*/
+                            default:
+                                state = 0;
+                                break;
                         }
+
+                        //state == 0 ? await this.getPackMeasurements() : undefined;
+                        //state == 0 ? await this.getMinMaxCellVoltage() : undefined;
+                        //state == 0 ? await this.getPackTemp() : undefined;
+                        //state == 0 ? await this.getDischargeChargeMosStatus() : undefined;
+                        //state == 0 ? await this.getStatusInfo() : undefined;
+                        //state == 1 ? await this.getCellVoltages() : undefined;
+                        //state == 2 ? await this.getCellTemperature() : undefined;
+                        //state == 2 ? await this.getCellBalanceState() : undefined;
+                        //state++;
+                        //if (state >= 10) {
+                        //    state = 0;
+                        // }
                     } catch (err) {
                         console.error(err);
-                        await this.protocol.close();
-                        await this.protocol.open();
+                        await this.#protocol.close();
+                        await this.#protocol.open();
                     }
                     flag = false;
                 }
             }, 100);
 
         } catch (err) {
+            console.error(err);
         }
     }
 
     async disconnect() {
         try {
-            await this.protocol.close();
+            await this.#protocol.close();
 
         } catch (err) {
             console.error(err);

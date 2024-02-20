@@ -11,13 +11,17 @@ class Protocol {
     CELL_VOLTAGES = 0x95;
     CELL_TEMPERATURE = 0x96;
     CELL_BALANCE_STATE = 0x97;
+    DISCHRG_FET = 0xD9;
+    CHRG_FET = 0xDA;
+    BMS_RESET = 0xFF;
+
 
     constructor(settings) {
         this.serialPortCom = new SerialPort({ path: settings?.port || "COM1", autoOpen: false, baudRate: parseInt(settings?.baudrate ? settings?.baudrate : 9600) });
-        this.parser = this.serialPortCom.pipe(new ByteLengthParser({ length: 13 }));
+        //this.parser = this.serialPortCom.pipe(new ByteLengthParser({ length: 13 }));
         this.frames = [];
-        this.parser.on('data', (chunk) => {
-            this.frames.push([...chunk]);
+        this.serialPortCom.on('data', (chunk) => {
+            this.frames = [...this.frames , ...chunk];
         });
 
     }
@@ -28,14 +32,14 @@ class Protocol {
                 resolve();
             } else {
                 try {
-                    this.serialPortCom.open(err=>{
-                        if ( err){
-                            reject();
+                    this.serialPortCom.open(err => {
+                        if (err) {
+                            reject(err);
                             return;
                         }
                         resolve();
                     });
-                 
+
                 } catch (err) {
                     console.error(err);
                     reject(err);
@@ -66,6 +70,7 @@ class Protocol {
     async write(data) {
         return new Promise((resolve, reject) => {
             this.frames = [];
+            this.serialPortCom.read();
             this.serialPortCom.write(data);
             this.serialPortCom.drain(err => {
                 if (err) {
@@ -74,6 +79,8 @@ class Protocol {
                     resolve();
                 }
             })
+
+
         });
     }
 
@@ -85,19 +92,34 @@ class Protocol {
         });
     }
 
-    async receiveBytes(){
+    async receiveBytes() {
         return new Promise(async (resolve, reject) => {
-            for ( let i = 0 ; i < 100 ; i++ ){
-                if ( this.frames.length > 0 ){
-                    let __frame = [...this.frames[0]];
-                    this.frames.splice(0,1);
-                    resolve(__frame);
-                    return;
+
+            for (let i = 0; i < 100; i++) {
+                
+                if ( this.frames.length >= 13 ){
+                    let _frame = this.frames.splice(0,13);
+                    
+
+                    //-- check chekSum
+                    let cheksum = 0;
+                    for ( let i = 0 ; i < 12 ; i++ ){
+                        cheksum += _frame[i];
+                    }
+
+                    if ( (cheksum & 0xFF) == _frame[12]){
+                        resolve(_frame);
+                        return; 
+                    } else {
+                        this.frames = [];
+                        console.log("error checksum");
+                    }
                 }
+
                 await this.sleep(10);
             }
             reject("timeout");
-        } );
+        });
     }
 
 
